@@ -1,0 +1,61 @@
+# Byte-compiled / compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment (if using venv)
+venv/
+.env
+*.env
+*.venv
+Pipfile
+Pipfile.lock
+
+# Flask instance and logs
+instance/
+*.log
+logs/
+error.log
+
+# Database files
+*.sqlite3
+*.db
+*.sqlite
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Pytest / Unit Test cache
+.pytest_cache/
+.coverage
+nosetests.xml
+coverage.xml
+*.cover
+*.pyc
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code and JetBrains IDEs
+.vscode/
+.idea/
+
+# Docker files
+*.dockerfile
+docker-compose.yml
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Node modules (if using frontend inside Flask)
+node_modules/
+
+# Celery task queue
+celerybeat-schedule
+
+# Gunicorn logs
+gunicorn.log
+gunicorn.err
