@@ -39,3 +39,5 @@ anyio==4.8.0
 numpy==1.26.4
 regex==2024.11.6
 tqdm==4.67.1
+
+gunicorn
