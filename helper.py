@@ -5,6 +5,18 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings
+
+# Load the prebuilt index
+vectorstore = FAISS.load_local(
+    "faiss_index",
+    OpenAIEmbeddings(),
+    allow_dangerous_deserialization=True  # ✅ you trust the source
+)
+
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
 
 # Global LLM instance (make sure your API key is set)
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -55,23 +67,48 @@ def get_design_advice(chat_history: str) -> str:
     advice = design_chain.invoke({'input': input_text})
     return advice
 
+# def generate_narrative(story_type: str, mode: str, style: str, chat_history: str) -> str:
+#     """Generate narrative text based on the user's preferences and chat history."""
+#     from langchain.prompts import ChatPromptTemplate
+#     from langchain_core.output_parsers import StrOutputParser
+
+#     # Construct the creative requirement string
+#     requirement = f'创作需求：{story_type}+{mode}+{style}。\n我的情感困境：{chat_history}'
+
+#     # Define a simple prompt for narrative generation
+#     generator_prompt = ChatPromptTemplate.from_messages([
+#         ('system', STORYWRITER_PROMPT),
+#         ('user', '{input}')
+#     ])
+#     output_parser = StrOutputParser()
+#     narrative_generator = generator_prompt | llm | output_parser
+#     generator_response = narrative_generator.invoke({'input': requirement})
+#     return generator_response
+
 def generate_narrative(story_type: str, mode: str, style: str, chat_history: str) -> str:
-    """Generate narrative text based on the user's preferences and chat history."""
+    """Generate a narrative with RAG-enhanced context."""
     from langchain.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
 
-    # Construct the creative requirement string
-    requirement = f'创作需求：{story_type}+{mode}+{style}。\n我的情感困境：{chat_history}'
+    query = f"{story_type}, {mode}, {style}, {chat_history}"
+    relevant_docs = retriever.invoke(query)
+    context = "\n\n".join([doc.page_content for doc in relevant_docs])
 
-    # Define a simple prompt for narrative generation
-    generator_prompt = ChatPromptTemplate.from_messages([
+    creative_input = (
+        f"创作需求：{story_type}+{mode}+{style}。\n"
+        f"我的情感困境：{chat_history}\n\n"
+        f"以下是一些可参考的故事素材：\n{context}"
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
         ('system', STORYWRITER_PROMPT),
         ('user', '{input}')
     ])
     output_parser = StrOutputParser()
-    narrative_generator = generator_prompt | llm | output_parser
-    generator_response = narrative_generator.invoke({'input': requirement})
-    return generator_response
+    chain = prompt | llm | output_parser
+
+    return chain.invoke({'input': creative_input})
+
 
 def reflect_on_text(history_chat: str, user_input: str) -> str:
     """Generate a reflective reply based on prior chat history and new input."""
