@@ -2,6 +2,7 @@
 flask==3.1.0
 flask-cors==5.0.0
 python-dotenv==1.0.1
+openai
 
 # --- LangChain Core + Extensions ---
 langchain==0.3.19

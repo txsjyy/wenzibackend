@@ -1,26 +1,23 @@
 # helper.py
-import os
 from operator import itemgetter
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
-from langchain.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
-
-# Load the prebuilt index
-vectorstore = FAISS.load_local(
-    "faiss_index",
-    OpenAIEmbeddings(),
-    allow_dangerous_deserialization=True  # ✅ you trust the source
-)
-
-retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
 
 # Global LLM instance (make sure your API key is set)
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-llm = ChatOpenAI(model="gpt-4o", temperature=0.3, max_tokens=None, timeout=None, max_retries=2)
+from dotenv import load_dotenv
+import os
+import openai
+
+# Load environment variables from .env
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
+
+llm = ChatOpenAI(model="gpt-4o", temperature=0.7, max_tokens=None, timeout=None, max_retries=2)
 
 def initialize_conversation():
     """Initialize the conversation chain and memory."""
@@ -44,80 +41,59 @@ def process_chat_message(conversation_chain, memory, user_input: str) -> str:
     reply = conversation_chain.invoke({'input': user_input})
     memory.save_context({'input': user_input}, {'output': reply.content})
     return reply.content
-def get_design_advice(chat_history: str) -> str:
+
+def generate_narrative(chat_history: str) -> str:
+    """Generate narrative text based on the user's preferences and chat history."""
     from langchain.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import StrOutputParser
 
-    # Create a prompt chain using the STORYDESIGN_PROMPT as the system message
-    design_prompt = ChatPromptTemplate.from_messages([
-        ('system', STORYDESIGN_PROMPT),
-        ('user', '{input}')
-    ])
+    # Construct the creative requirement string
+    requirement = f'\n我的情感困境：{chat_history}'
 
-    output_parser = StrOutputParser()
-    design_chain = design_prompt | llm | output_parser
-
-    # Format the user input to reference the conversation history
-    input_text = (
-        f"以下是我与玩家的对话:\n{chat_history}\n"
-        f"基于上面的对话，请给出三个最能引发情感共鸣的文学创作类型，"
-        "三种可能的疗愈模式，以及三个为人熟知的合适的作家，并给出推荐理由。"
-    )
-
-    advice = design_chain.invoke({'input': input_text})
-    return advice
-
-# def generate_narrative(story_type: str, mode: str, style: str, chat_history: str) -> str:
-#     """Generate narrative text based on the user's preferences and chat history."""
-#     from langchain.prompts import ChatPromptTemplate
-#     from langchain_core.output_parsers import StrOutputParser
-
-#     # Construct the creative requirement string
-#     requirement = f'创作需求：{story_type}+{mode}+{style}。\n我的情感困境：{chat_history}'
-
-#     # Define a simple prompt for narrative generation
-#     generator_prompt = ChatPromptTemplate.from_messages([
-#         ('system', STORYWRITER_PROMPT),
-#         ('user', '{input}')
-#     ])
-#     output_parser = StrOutputParser()
-#     narrative_generator = generator_prompt | llm | output_parser
-#     generator_response = narrative_generator.invoke({'input': requirement})
-#     return generator_response
-
-def generate_narrative(story_type: str, mode: str, style: str, chat_history: str) -> str:
-    """Generate a narrative with RAG-enhanced context."""
-    from langchain.prompts import ChatPromptTemplate
-    from langchain_core.output_parsers import StrOutputParser
-
-    query = f"{story_type}, {mode}, {style}, {chat_history}"
-    relevant_docs = retriever.invoke(query)
-    context = "\n\n".join([doc.page_content for doc in relevant_docs])
-
-    creative_input = (
-        f"创作需求：{story_type}+{mode}+{style}。\n"
-        f"我的情感困境：{chat_history}\n\n"
-        f"以下是一些可参考的故事素材：\n{context}"
-    )
-
-    prompt = ChatPromptTemplate.from_messages([
+    # Define a simple prompt for narrative generation
+    generator_prompt = ChatPromptTemplate.from_messages([
         ('system', STORYWRITER_PROMPT),
         ('user', '{input}')
     ])
     output_parser = StrOutputParser()
-    chain = prompt | llm | output_parser
+    narrative_generator = generator_prompt | llm | output_parser
+    generator_response = narrative_generator.invoke({'input': requirement})
+    return generator_response
 
-    return chain.invoke({'input': creative_input})
 
+# def reflect_on_text(history_chat: str, user_input: str) -> str:
+#     """Generate a reflective reply based on prior chat history and new input."""
+#     from langchain.prompts import ChatPromptTemplate
+#     from langchain.memory import ConversationBufferWindowMemory
+#     from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
 
-def reflect_on_text(history_chat: str, user_input: str) -> str:
-    """Generate a reflective reply based on prior chat history and new input."""
+#     prompt = ChatPromptTemplate.from_messages([
+#         ('system', ""),
+#         MessagesPlaceholder(variable_name='history'),
+#         ('human', '{input}')
+#     ])
+#     memory = ConversationBufferWindowMemory(k=30, return_messages=True)
+#     reflector_chain = (
+#         RunnablePassthrough.assign(
+#             history=RunnableLambda(memory.load_memory_variables) | itemgetter('history')
+#         )
+#         | prompt
+#         | llm
+#     )
+#     reply = reflector_chain.invoke({'input': user_input})
+#     memory.save_context({'input': user_input}, {'output': reply.content})
+#     return reply.content
+
+def reflect_on_text(history_chat: str, user_input: str, story: str) -> str:
     from langchain.prompts import ChatPromptTemplate
     from langchain.memory import ConversationBufferWindowMemory
     from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
 
+    # 构建 prompt：让AI看到用户的情感困境/对话历史 + 故事文本 + 用户当前输入
     prompt = ChatPromptTemplate.from_messages([
-        ('system', ""),
+        ('system', f"用户的情感困境和对话历史如下：\n{history_chat}\n\n"
+                   f"以下是基于用户情感困境生成的文学作品：\n{story}\n\n"
+                   "你现在要和用户做深度反思对话，引导用户从故事中产生共鸣，结合历史上下文和故事内容回复用户。"),
         MessagesPlaceholder(variable_name='history'),
         ('human', '{input}')
     ])
@@ -132,6 +108,7 @@ def reflect_on_text(history_chat: str, user_input: str) -> str:
     reply = reflector_chain.invoke({'input': user_input})
     memory.save_context({'input': user_input}, {'output': reply.content})
     return reply.content
+
 
 
 INITIAL_PROMPT = """
@@ -160,15 +137,15 @@ STORYDESIGN_PROMPT = '''
 
 参考信息：
 可能的文学创作类型包括但不限于：
-	1.	现实主义（真实生活的深刻描绘，贴近现实）
-	2.	幻想/奇幻（用超现实的隐喻表达情感）
-	3.	科幻/未来（用未来视角探讨当下的情绪）
-	4.	武侠/冒险（以江湖恩怨或冒险旅程映射情感）
-	5.	都市情感（关注爱情、亲情、友情、职场等）
-	6.	悬疑/戏剧冲突（强化戏剧性，放大情感冲击）
-  7.  寓言/童话（以想象，夸张，和比喻寄寓哲思）
-  8.  诗歌（以诗歌的形式直抒胸臆，表达强烈的情绪）
-  9.  禅机/禅意（以富有禅意的佛学故事安抚情绪、启迪心灵）
+1.	现实主义（真实生活的深刻描绘，贴近现实）
+2.	幻想/奇幻（用超现实的隐喻表达情感）
+3.	科幻/未来（用未来视角探讨当下的情绪）
+4.	武侠/冒险（以江湖恩怨或冒险旅程映射情感）
+5.	都市情感（关注爱情、亲情、友情、职场等）
+6.	悬疑/戏剧冲突（强化戏剧性，放大情感冲击）
+7.  寓言/童话（以想象，夸张，和比喻寄寓哲思）
+8.  诗歌（以诗歌的形式直抒胸臆，表达强烈的情绪）
+9.  禅机/禅意（以富有禅意的佛学故事安抚情绪、启迪心灵）
 
 可能的疗愈模式包括：
 安慰模式（提供温暖、正向、治愈系的故事），
@@ -197,15 +174,14 @@ STORYWRITER_PROMPT = '''
 
 参考信息：
 可能的文学创作类型包括但不限于：
-	1.	现实主义（真实生活的深刻描绘，贴近现实）
-	2.	幻想/奇幻（用超现实的隐喻表达情感）
-	3.	科幻/未来（用未来视角探讨当下的情绪）
-	4.	武侠/冒险（以江湖恩怨或冒险旅程映射情感）
-	5.	都市情感（关注爱情、亲情、友情、职场等）
-	6.	悬疑/戏剧冲突（强化戏剧性，放大情感冲击）
-  7.  寓言/童话（以想象，夸张，和比喻寄寓哲思）
-  8.  诗歌（以诗歌的形式直抒胸臆，表达强烈的情绪）
-  9.  禅机/禅意（以富有禅意的佛学故事安抚情绪、启迪心灵）
+1.	现实主义（真实生活的深刻描绘，贴近现实）
+2.	幻想/奇幻（用超现实的隐喻表达情感）
+3.	科幻/未来（用未来视角探讨当下的情绪）
+4.	武侠/冒险（以江湖恩怨或冒险旅程映射情感）
+5.	都市情感（关注爱情、亲情、友情、职场等）
+6.  寓言/童话（以想象，夸张，和比喻寄寓哲思）
+7.  诗歌（以诗歌的形式直抒胸臆，表达强烈的情绪）
+8.  禅机/禅意（以富有禅意的佛学故事安抚情绪、启迪心灵）
 
 可能的疗愈模式包括：
 安慰模式（提供温暖、正向、治愈系的故事），
