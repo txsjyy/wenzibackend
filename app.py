@@ -8,9 +8,7 @@ import openai
 
 # Load environment variables from .env
 load_dotenv()
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
 
 
 app = Flask(__name__)
@@ -73,25 +71,27 @@ def reflect():
 @app.route('/api/pure_gpt4o_chat', methods=['POST'])
 def pure_gpt4o_chat():
     data = request.get_json()
-    user_message = data.get('input', '')
+    user_message = data.get('input', '').strip()
     if not user_message:
         return jsonify({"error": "No input provided"}), 400
     try:
-        # You can customize the system prompt as needed
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
         messages = [
             {"role": "system", "content": "你是一位善于用中文疗愈人心的AI心理咨询师。请温和、详细、真诚地用中文与用户对话。"},
             {"role": "user", "content": user_message}
         ]
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
             temperature=0.7,
             max_tokens=1024
         )
-        reply = response.choices[0].message["content"]
+        reply = response.choices[0].message.content
         return jsonify({"response": reply})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("OpenAI Exception:", e)
+        return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})" }), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0',port=5000,debug=True)
