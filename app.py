@@ -1,72 +1,125 @@
-# app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from helper import initialize_conversation, process_chat_message, generate_narrative, reflect_on_text
 from dotenv import load_dotenv
-import os
-import openai
+from session_memory import SessionMemoryStore
+from openai_key_manager import openai_key_manager
+from helper import (
+    build_chain,
+    build_narrative_chain,
+    build_reflection_chain,
+    call_openai_with_fallback,
+    get_history_as_string
+)
+from langchain.memory import ConversationBufferWindowMemory
 
-# Load environment variables from .env
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
+CORS(app)
 
-# Global conversation state (for demonstration purposes)
-conversation_chain, memory = initialize_conversation()
+session_memory_store = SessionMemoryStore()
 
 @app.route('/api/start', methods=['GET'])
 def start():
-    """Reset the conversation and return the initial greeting."""
-    global conversation_chain, memory
-    conversation_chain, memory = initialize_conversation()
     greeting = (
-"🎮 欢迎来到这场文字疗愈之旅。\n"
-"请告诉我，你的情感困境是什么？你可以简单描述自己的处境、情绪，或者最近让你感到困扰的事情。这里是一个安全的空间，你可以随意表达。\n"
-"如果你需要一些参考，你可以这样描述：\n"
-"1. “我最近在工作上遇到了很大的挑战，感觉自己一直在努力，却得不到认可。”\n"
-"2. “我刚刚经历了一场失恋，感到失落和自我怀疑。”\n"
-"3. “我对未来感到迷茫，不知道自己的方向在哪里。”\n"
-"你可以尽量详细一些，但不用勉强自己，只写你愿意分享的部分。等你准备好了，就告诉我吧。\n"
+        "你好，我是一名心理疗愈机器人，感谢你愿意在这里分享。\n"
+        "你可以慢慢告诉我你最近遇到的情绪困境。无论是关于工作、学业上的压力，经济方面的焦虑，"
+        "身体或心理上的不适，还是在人际关系中的烦恼与失落，都可以随意向我倾诉。我会认真聆听，不评判、不催促。\n"
+        "你愿意和我说说看吗？"
     )
     return jsonify({"message": greeting})
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Receive a user message, process it, and return the reply."""
-    global conversation_chain, memory
     data = request.get_json()
+    session_id = data.get('session_id')
     user_input = data.get('input', '')
-    if not user_input:
-        return jsonify({"error": "No input provided"}), 400
+    if not session_id or not user_input:
+        return jsonify({"error": "Missing session_id or input"}), 400
 
-    reply = process_chat_message(conversation_chain, memory, user_input)
-    return jsonify({"response": reply})
+    session_memory_store.cleanup()
+    session_data = session_memory_store.get(session_id)
+    memory = session_data.get('memory')
+    if not memory:
+        memory = ConversationBufferWindowMemory(k=30, return_messages=True)
+    # Rotate through keys
+    for _ in range(len(openai_key_manager.keys)):
+        api_key = openai_key_manager.get_key()
+        try:
+            chain = build_chain(memory, api_key)
+            reply = chain.invoke({'input': user_input})
+            memory.save_context({'input': user_input}, {'output': reply.content})
+            session_data['memory'] = memory
+            session_memory_store.set(session_id, session_data)
+            return jsonify({"response": reply.content})
+        except Exception as e:
+            if 'rate limit' in str(e).lower():
+                openai_key_manager.rotate()
+                continue
+            else:
+                return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "All API keys exhausted or invalid."}), 500
 
 @app.route('/api/generate_narrative', methods=['POST'])
 def narrative():
     data = request.get_json()
-    chat_history = data.get('chat_history', '')
-    if not chat_history:
-        return jsonify({"error": "Chat history is required."}), 400
+    session_id = data.get('session_id')
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+    session_data = session_memory_store.get(session_id)
+    memory = session_data.get('memory')
+    if not memory:
+        return jsonify({"error": "No memory found for this session"}), 400
 
-    narrative_text = generate_narrative(chat_history)
-    return jsonify({"narrative": narrative_text})
+    # 🚩 1. If already generated, return it
+    if 'story' in session_data and session_data['story']:
+        return jsonify({"narrative": session_data['story']})
+
+    chat_history = get_history_as_string(memory)
+
+    # 🚩 2. If not, generate and store
+    for _ in range(len(openai_key_manager.keys)):
+        api_key = openai_key_manager.get_key()
+        try:
+            narrative_generator = build_narrative_chain(api_key)
+            narrative_text = narrative_generator.invoke({'input': f'\n我的情感困境：{chat_history}'})
+            session_data['story'] = narrative_text
+            session_memory_store.set(session_id, session_data)
+            return jsonify({"narrative": narrative_text})
+        except Exception as e:
+            if 'rate limit' in str(e).lower():
+                openai_key_manager.rotate()
+                continue
+            else:
+                return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "All API keys exhausted or invalid."}), 500
+
 
 @app.route('/api/reflect', methods=['POST'])
 def reflect():
     data = request.get_json()
-    history_chat = data.get('history_chat', '')
+    session_id = data.get('session_id')
     user_input = data.get('input', '')
-    story = data.get('story', '')   # 新增
-    if not history_chat or not user_input or not story:
-        return jsonify({"error": "Missing history_chat, input, or story."}), 400
-
-    reflection = reflect_on_text(history_chat, user_input, story)  # 多传一个参数
-    return jsonify({"reflection": reflection})
-
+    if not session_id or not user_input:
+        return jsonify({"error": "Missing session_id or input"}), 400
+    session_data = session_memory_store.get(session_id)
+    memory = session_data.get('memory')
+    story = session_data.get('story')
+    if not memory or not story:
+        return jsonify({"error": "No memory or story found for this session"}), 400
+    history_chat = get_history_as_string(memory)
+    for _ in range(len(openai_key_manager.keys)):
+        api_key = openai_key_manager.get_key()
+        try:
+            reflector_chain, _ = build_reflection_chain(history_chat, story, api_key)
+            reflection = reflector_chain.invoke({'input': user_input})
+            return jsonify({"reflection": reflection.content})
+        except Exception as e:
+            if 'rate limit' in str(e).lower():
+                openai_key_manager.rotate()
+                continue
+            else:
+                return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "All API keys exhausted or invalid."}), 500
 
 @app.route('/api/pure_gpt4o_chat', methods=['POST'])
 def pure_gpt4o_chat():
@@ -74,24 +127,32 @@ def pure_gpt4o_chat():
     user_message = data.get('input', '').strip()
     if not user_message:
         return jsonify({"error": "No input provided"}), 400
+    system_prompt = (
+        "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
+        "你必须首先严格使用下面这段话来和用户打招呼和询问：‘你好，我是一名心理疗愈机器人，感谢你愿意在这里分享。"
+        "你可以慢慢告诉我你最近遇到的情绪困境。无论是关于工作、学业上的压力，经济方面的焦虑，"
+        "身体或心理上的不适，还是在人际关系中的烦恼与失落，都可以随意向我倾诉。"
+        "我会认真聆听，不评判、不催促。你愿意和我说说看吗？’"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message}
+    ]
     try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        messages = [
-            {"role": "system", "content": "你是一位善于用中文疗愈人心的AI心理咨询师。请温和、详细、真诚地用中文与用户对话。"},
-            {"role": "user", "content": user_message}
-        ]
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1024
-        )
-        reply = response.choices[0].message.content
+        reply = call_openai_with_fallback(messages)
         return jsonify({"response": reply})
     except Exception as e:
-        print("OpenAI Exception:", e)
-        return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})" }), 500
+        return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
 
+@app.route('/api/end_session', methods=['POST'])
+def end_session():
+    data = request.get_json()
+    session_id = data.get('session_id')
+    if session_id:
+        session_memory_store.delete(session_id)
+        return jsonify({'status': 'ok'})
+    else:
+        return jsonify({'error': 'Missing session_id'}), 400
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',port=5000,debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
