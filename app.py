@@ -124,15 +124,19 @@ def reflect():
 @app.route('/api/pure_gpt4o_chat', methods=['POST'])
 def pure_gpt4o_chat():
     data = request.get_json()
+    session_id = data.get('session_id')
     user_message = data.get('input', '').strip()
     if not user_message:
         return jsonify({"error": "No input provided"}), 400
+    if not session_id:
+        return jsonify({"error": "No session_id provided"}), 400
+
+    # Optional: Initialize session for future use
+    if not session_memory_store.get(session_id):
+        session_memory_store.set(session_id, {})
+
     system_prompt = (
         "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
-        "你必须首先严格使用下面这段话来和用户打招呼和询问：‘你好，我是一名心理疗愈机器人，感谢你愿意在这里分享。"
-        "你可以慢慢告诉我你最近遇到的情绪困境。无论是关于工作、学业上的压力，经济方面的焦虑，"
-        "身体或心理上的不适，还是在人际关系中的烦恼与失落，都可以随意向我倾诉。"
-        "我会认真聆听，不评判、不催促。你愿意和我说说看吗？’"
     )
     messages = [
         {"role": "system", "content": system_prompt},
@@ -143,6 +147,7 @@ def pure_gpt4o_chat():
         return jsonify({"response": reply})
     except Exception as e:
         return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
+
 
 @app.route('/api/end_session', methods=['POST'])
 def end_session():
