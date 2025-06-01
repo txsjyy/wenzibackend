@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from session_memory import SessionMemoryStore
+import os
+# from session_memory import SessionMemoryStore
+from session_memory import MongoDBSessionMemoryStore
 from openai_key_manager import openai_key_manager
 from helper import (
     build_chain,
@@ -16,7 +18,9 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-session_memory_store = SessionMemoryStore()
+# session_memory_store = SessionMemoryStore()
+MONGODB_URI = os.getenv("MONGODB_URI")
+session_memory_store = MongoDBSessionMemoryStore(MONGODB_URI)
 
 @app.route('/api/start', methods=['GET'])
 def start():
@@ -160,4 +164,4 @@ def end_session():
         return jsonify({'error': 'Missing session_id'}), 400
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5002, debug=True)
