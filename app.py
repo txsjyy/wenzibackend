@@ -135,22 +135,56 @@ def pure_gpt4o_chat():
     if not session_id:
         return jsonify({"error": "No session_id provided"}), 400
 
-    # Optional: Initialize session for future use
-    if not session_memory_store.get(session_id):
-        session_memory_store.set(session_id, {})
+    # Load session messages or initialize
+    session_data = session_memory_store.get(session_id) or {}
+    history = session_data.get("messages", [])
 
     system_prompt = (
         "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
     )
-    messages = [
-        {"role": "system", "content": system_prompt},
+
+    # Compose message history for OpenAI API
+    messages = [{"role": "system", "content": system_prompt}] + history + [
         {"role": "user", "content": user_message}
     ]
+
     try:
         reply = call_openai_with_fallback(messages)
+        # Update history
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        session_data["messages"] = history
+        session_memory_store.set(session_id, session_data)
         return jsonify({"response": reply})
     except Exception as e:
         return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
+
+# @app.route('/api/pure_gpt4o_chat', methods=['POST'])
+# def pure_gpt4o_chat():
+#     data = request.get_json()
+#     session_id = data.get('session_id')
+#     user_message = data.get('input', '').strip()
+#     if not user_message:
+#         return jsonify({"error": "No input provided"}), 400
+#     if not session_id:
+#         return jsonify({"error": "No session_id provided"}), 400
+
+#     # Optional: Initialize session for future use
+#     if not session_memory_store.get(session_id):
+#         session_memory_store.set(session_id, {})
+
+#     system_prompt = (
+#         "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
+#     )
+#     messages = [
+#         {"role": "system", "content": system_prompt},
+#         {"role": "user", "content": user_message}
+#     ]
+#     try:
+#         reply = call_openai_with_fallback(messages)
+#         return jsonify({"response": reply})
+#     except Exception as e:
+#         return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
 
 
 @app.route('/api/end_session', methods=['POST'])
