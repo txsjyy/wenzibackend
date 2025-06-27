@@ -4,12 +4,13 @@ from dotenv import load_dotenv
 import os
 # from session_memory import SessionMemoryStore
 from session_memory import MongoDBSessionMemoryStore
-from openai_key_manager import openai_key_manager
+from deepseek_key_manager import deepseek_key_manager
 from helper import (
     build_chain,
     build_narrative_chain,
     build_reflection_chain,
-    call_openai_with_fallback,
+    # call_openai_with_fallback,
+    call_deepseek_with_fallback,
     get_history_as_string
 )
 from langchain.memory import ConversationBufferWindowMemory
@@ -46,8 +47,8 @@ def chat():
     if not memory:
         memory = ConversationBufferWindowMemory(k=30, return_messages=True)
     # Rotate through keys
-    for _ in range(len(openai_key_manager.keys)):
-        api_key = openai_key_manager.get_key()
+    for _ in range(len(deepseek_key_manager.keys)):
+        api_key = deepseek_key_manager.get_key()
         try:
             chain = build_chain(memory, api_key)
             reply = chain.invoke({'input': user_input})
@@ -81,8 +82,8 @@ def narrative():
     chat_history = get_history_as_string(memory)
 
     # 🚩 2. If not, generate and store
-    for _ in range(len(openai_key_manager.keys)):
-        api_key = openai_key_manager.get_key()
+    for _ in range(len(deepseek_key_manager.keys)):
+        api_key = deepseek_key_manager.get_key()
         try:
             narrative_generator = build_narrative_chain(api_key)
             narrative_text = narrative_generator.invoke({'input': f'\n我的情感困境：{chat_history}'})
@@ -91,7 +92,7 @@ def narrative():
             return jsonify({"narrative": narrative_text})
         except Exception as e:
             if 'rate limit' in str(e).lower():
-                openai_key_manager.rotate()
+                deepseek_key_manager.rotate()
                 continue
             else:
                 return jsonify({"error": str(e)}), 500
@@ -111,53 +112,19 @@ def reflect():
     if not memory or not story:
         return jsonify({"error": "No memory or story found for this session"}), 400
     history_chat = get_history_as_string(memory)
-    for _ in range(len(openai_key_manager.keys)):
-        api_key = openai_key_manager.get_key()
+    for _ in range(len(deepseek_key_manager.keys)):
+        api_key = deepseek_key_manager.get_key()
         try:
             reflector_chain, _ = build_reflection_chain(history_chat, story, api_key)
             reflection = reflector_chain.invoke({'input': user_input})
             return jsonify({"reflection": reflection.content})
         except Exception as e:
             if 'rate limit' in str(e).lower():
-                openai_key_manager.rotate()
+                deepseek_key_manager.rotate()
                 continue
             else:
                 return jsonify({"error": str(e)}), 500
     return jsonify({"error": "All API keys exhausted or invalid."}), 500
-
-@app.route('/api/pure_gpt4o_chat', methods=['POST'])
-def pure_gpt4o_chat():
-    data = request.get_json()
-    session_id = data.get('session_id')
-    user_message = data.get('input', '').strip()
-    if not user_message:
-        return jsonify({"error": "No input provided"}), 400
-    if not session_id:
-        return jsonify({"error": "No session_id provided"}), 400
-
-    # Load session messages or initialize
-    session_data = session_memory_store.get(session_id) or {}
-    history = session_data.get("messages", [])
-
-    system_prompt = (
-        "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
-    )
-
-    # Compose message history for OpenAI API
-    messages = [{"role": "system", "content": system_prompt}] + history + [
-        {"role": "user", "content": user_message}
-    ]
-
-    try:
-        reply = call_openai_with_fallback(messages)
-        # Update history
-        history.append({"role": "user", "content": user_message})
-        history.append({"role": "assistant", "content": reply})
-        session_data["messages"] = history
-        session_memory_store.set(session_id, session_data)
-        return jsonify({"response": reply})
-    except Exception as e:
-        return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
 
 # @app.route('/api/pure_gpt4o_chat', methods=['POST'])
 # def pure_gpt4o_chat():
@@ -169,23 +136,59 @@ def pure_gpt4o_chat():
 #     if not session_id:
 #         return jsonify({"error": "No session_id provided"}), 400
 
-#     # Optional: Initialize session for future use
-#     if not session_memory_store.get(session_id):
-#         session_memory_store.set(session_id, {})
+#     # Load session messages or initialize
+#     session_data = session_memory_store.get(session_id) or {}
+#     history = session_data.get("messages", [])
 
 #     system_prompt = (
 #         "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
 #     )
-#     messages = [
-#         {"role": "system", "content": system_prompt},
+
+#     # Compose message history for OpenAI API
+#     messages = [{"role": "system", "content": system_prompt}] + history + [
 #         {"role": "user", "content": user_message}
 #     ]
+
 #     try:
 #         reply = call_openai_with_fallback(messages)
+#         # Update history
+#         history.append({"role": "user", "content": user_message})
+#         history.append({"role": "assistant", "content": reply})
+#         session_data["messages"] = history
+#         session_memory_store.set(session_id, session_data)
 #         return jsonify({"response": reply})
 #     except Exception as e:
 #         return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
+@app.route('/api/pure_deepseek_chat', methods=['POST'])
+def pure_deepseek_chat():
+    data = request.get_json()
+    session_id = data.get('session_id')
+    user_message = data.get('input', '').strip()
+    if not user_message:
+        return jsonify({"error": "No input provided"}), 400
+    if not session_id:
+        return jsonify({"error": "No session_id provided"}), 400
 
+    session_data = session_memory_store.get(session_id) or {}
+    history = session_data.get("messages", [])
+
+    system_prompt = (
+        "你是一位极其出色的心理疗愈师，擅长帮助用户缓解他们的情绪困境。"
+    )
+
+    messages = [{"role": "system", "content": system_prompt}] + history + [
+        {"role": "user", "content": user_message}
+    ]
+
+    try:
+        reply = call_deepseek_with_fallback(messages)
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+        session_data["messages"] = history
+        session_memory_store.set(session_id, session_data)
+        return jsonify({"response": reply})
+    except Exception as e:
+        return jsonify({"error": f"AI接口异常，请稍后重试。({str(e)})"}), 500
 
 @app.route('/api/end_session', methods=['POST'])
 def end_session():

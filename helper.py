@@ -3,7 +3,9 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
-from openai_key_manager import openai_key_manager
+from deepseek_key_manager import deepseek_key_manager
+import requests
+
 
 INITIAL_PROMPT = """
 你是一位极其出色的心理疗愈师，擅长创作能够引发读者共鸣文学故事，并以此疗愈中文用户。你必须完全用中文与用户沟通。
@@ -43,14 +45,21 @@ def build_chain(memory, openai_api_key):
         MessagesPlaceholder(variable_name='history'),
         ('human', '{input}')
     ])
+    # llm = ChatOpenAI(
+    #     model="gpt-4o",
+    #     temperature=0.7,
+    #     max_tokens=None,
+    #     timeout=None,
+    #     max_retries=2,
+    #     openai_api_key=openai_api_key
+    # )
     llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.7,
-        max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        openai_api_key=openai_api_key
-    )
+    model="deepseek-chat",
+    temperature=0.7,
+    max_tokens=None,
+    openai_api_key=deepseek_key_manager.get_key(),
+    openai_api_base="https://api.deepseek.com/v1",  # Change this!
+)
     chain = (
         RunnablePassthrough.assign(
             history=RunnableLambda(memory.load_memory_variables) | itemgetter('history')
@@ -67,12 +76,11 @@ def build_narrative_chain(openai_api_key):
         ('user', '{input}')
     ])
     llm = ChatOpenAI(
-        model="gpt-4o",
+        model="deepseek-chat",
         temperature=0.7,
         max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        openai_api_key=openai_api_key
+        openai_api_key=deepseek_key_manager.get_key(),
+        openai_api_base="https://api.deepseek.com/v1",
     )
     output_parser = StrOutputParser()
     narrative_generator = generator_prompt | llm | output_parser
@@ -88,12 +96,11 @@ def build_reflection_chain(history_chat, story, openai_api_key):
     ])
     memory = ConversationBufferWindowMemory(k=30, return_messages=True)
     llm = ChatOpenAI(
-        model="gpt-4o",
+        model="deepseek-chat",
         temperature=0.7,
         max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        openai_api_key=openai_api_key
+        openai_api_key=deepseek_key_manager.get_key(),
+        openai_api_base="https://api.deepseek.com/v1",  
     )
     reflector_chain = (
         RunnablePassthrough.assign(
@@ -114,24 +121,54 @@ def get_history_as_string(memory):
         history.append(f"{role}: {m.content}")
     return "\n".join(history)
 
-def call_openai_with_fallback(messages, model="gpt-4o", temperature=0.7):
-    import openai
-    for _ in range(len(openai_key_manager.keys)):
-        api_key = openai_key_manager.get_key()
+# def call_openai_with_fallback(messages, model="gpt-4o", temperature=0.7):
+#     import openai
+#     for _ in range(len(openai_key_manager.keys)):
+#         api_key = openai_key_manager.get_key()
+#         try:
+#             client = openai.OpenAI(api_key=api_key)
+#             response = client.chat.completions.create(
+#                 model=model,
+#                 messages=messages,
+#                 temperature=temperature,
+#             )
+#             return response.choices[0].message.content
+#         except openai.RateLimitError:
+#             openai_key_manager.rotate()
+#             continue
+#         except Exception as e:
+#             if 'rate limit' in str(e).lower():
+#                 openai_key_manager.rotate()
+#                 continue
+#             raise e
+#     raise Exception("All API keys exhausted or invalid.")
+
+def call_deepseek_with_fallback(messages, model="deepseek-chat", temperature=0.7):
+    url = "https://api.deepseek.com/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+
+    for _ in range(len(deepseek_key_manager.keys)):
+        api_key = deepseek_key_manager.get_key()
+        headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
         try:
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-            )
-            return response.choices[0].message.content
-        except openai.RateLimitError:
-            openai_key_manager.rotate()
-            continue
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.HTTPError as e:
+            if resp.status_code == 429:
+                deepseek_key_manager.rotate()
+                continue
+            raise
         except Exception as e:
-            if 'rate limit' in str(e).lower():
-                openai_key_manager.rotate()
+            if "rate limit" in str(e).lower():
+                deepseek_key_manager.rotate()
                 continue
             raise e
-    raise Exception("All API keys exhausted or invalid.")
+    raise Exception("All DeepSeek API keys exhausted or invalid.")
+
