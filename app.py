@@ -58,7 +58,7 @@ def chat():
             return jsonify({"response": reply.content})
         except Exception as e:
             if 'rate limit' in str(e).lower():
-                openai_key_manager.rotate()
+                deepseek_key_manager.rotate()
                 continue
             else:
                 return jsonify({"error": str(e)}), 500

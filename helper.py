@@ -45,14 +45,6 @@ def build_chain(memory, openai_api_key):
         MessagesPlaceholder(variable_name='history'),
         ('human', '{input}')
     ])
-    # llm = ChatOpenAI(
-    #     model="gpt-4o",
-    #     temperature=0.7,
-    #     max_tokens=None,
-    #     timeout=None,
-    #     max_retries=2,
-    #     openai_api_key=openai_api_key
-    # )
     llm = ChatOpenAI(
     model="deepseek-chat",
     temperature=0.7,
@@ -120,28 +112,6 @@ def get_history_as_string(memory):
         role = "用户" if m.type == "human" else "AI"
         history.append(f"{role}: {m.content}")
     return "\n".join(history)
-
-# def call_openai_with_fallback(messages, model="gpt-4o", temperature=0.7):
-#     import openai
-#     for _ in range(len(openai_key_manager.keys)):
-#         api_key = openai_key_manager.get_key()
-#         try:
-#             client = openai.OpenAI(api_key=api_key)
-#             response = client.chat.completions.create(
-#                 model=model,
-#                 messages=messages,
-#                 temperature=temperature,
-#             )
-#             return response.choices[0].message.content
-#         except openai.RateLimitError:
-#             openai_key_manager.rotate()
-#             continue
-#         except Exception as e:
-#             if 'rate limit' in str(e).lower():
-#                 openai_key_manager.rotate()
-#                 continue
-#             raise e
-#     raise Exception("All API keys exhausted or invalid.")
 
 def call_deepseek_with_fallback(messages, model="deepseek-chat", temperature=0.7):
     url = "https://api.deepseek.com/v1/chat/completions"
