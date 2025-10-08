@@ -5,6 +5,7 @@ from langchain.memory import ConversationBufferWindowMemory
 from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
 from deepseek_key_manager import deepseek_key_manager
 import requests
+from flask import stream_with_context
 
 
 INITIAL_PROMPT = """
@@ -15,7 +16,7 @@ INITIAL_PROMPT = """
    •   财务状况
    •   身体或心理健康
    •   人际关系（爱情、友情、亲情）
-当你觉得用户的情感困境已经充分描述了，请适时询问用户还有其他要讲述的内容。如果用户给予了否定的回答，请你首先告诉用户你很高兴他们愿意分享自己的情绪困境，并提醒用户可以开始“进入下一步”，来进入下一个环节。不要透露你下一步的计划。
+当你觉得用户的情感困境已经充分描述了，请适时询问用户还有其他要讲述的内容。如果用户给予了否定的回答，请你首先告诉用户你很高兴他们愿意分享自己的情绪困境，并提醒用户输入“下一步”，来进入下一个环节。不要透露你下一步的计划。
 """
 
 STORYWRITER_PROMPT = '''
@@ -61,22 +62,48 @@ def build_chain(memory, openai_api_key):
     )
     return chain
 
-def build_narrative_chain(openai_api_key):
+# def build_narrative_chain(openai_api_key):
+#     from langchain_core.output_parsers import StrOutputParser
+#     generator_prompt = ChatPromptTemplate.from_messages([
+#         ('system', STORYWRITER_PROMPT),
+#         ('user', '{input}')
+#     ])
+#     llm = ChatOpenAI(
+#         model="deepseek-chat",
+#         temperature=0.7,
+#         max_tokens=None,
+#         openai_api_key=deepseek_key_manager.get_key(),
+#         openai_api_base="https://api.deepseek.com/v1",
+#     )
+#     output_parser = StrOutputParser()
+#     narrative_generator = generator_prompt | llm | output_parser
+#     return narrative_generator
+def build_narrative_chain(openai_api_key: str):
+    """
+    Returns an LCEL pipeline: (prompt) -> (LLM-stream) -> (string chunks).
+    - Uses the *provided* API key (no hidden re-fetch from manager)
+    - Caps max_tokens for predictable latency
+    - Enables streaming so .astream() yields string chunks
+    """
     from langchain_core.output_parsers import StrOutputParser
     generator_prompt = ChatPromptTemplate.from_messages([
         ('system', STORYWRITER_PROMPT),
         ('user', '{input}')
     ])
+
     llm = ChatOpenAI(
         model="deepseek-chat",
         temperature=0.7,
-        max_tokens=None,
-        openai_api_key=deepseek_key_manager.get_key(),
+        max_tokens=None,                   # <= cap output to keep latency down
+        openai_api_key=openai_api_key,     # <= use the arg you pass in
         openai_api_base="https://api.deepseek.com/v1",
+        streaming=True,                    # <= important for .astream()
     )
-    output_parser = StrOutputParser()
-    narrative_generator = generator_prompt | llm | output_parser
-    return narrative_generator
+
+    return generator_prompt | llm | StrOutputParser()
+
+
+
 
 def build_reflection_chain(history_chat, story, openai_api_key):
     prompt = ChatPromptTemplate.from_messages([
@@ -113,6 +140,7 @@ def get_history_as_string(memory):
         history.append(f"{role}: {m.content}")
     return "\n".join(history)
 
+
 def call_deepseek_with_fallback(messages, model="deepseek-chat", temperature=0.7):
     url = "https://api.deepseek.com/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -141,4 +169,3 @@ def call_deepseek_with_fallback(messages, model="deepseek-chat", temperature=0.7
                 continue
             raise e
     raise Exception("All DeepSeek API keys exhausted or invalid.")
-

@@ -1,28 +1,3 @@
-# import time
-
-# class SessionMemoryStore:
-#     def __init__(self):
-#         self.store = {}
-#         self.last_access = {}
-
-#     def get(self, session_id):
-#         self.last_access[session_id] = time.time()
-#         return self.store.get(session_id, {})
-
-#     def set(self, session_id, data):
-#         self.store[session_id] = data
-#         self.last_access[session_id] = time.time()
-
-#     def delete(self, session_id):
-#         if session_id in self.store:
-#             del self.store[session_id]
-#             del self.last_access[session_id]
-
-#     def cleanup(self, ttl=3600):
-#         now = time.time()
-#         to_delete = [sid for sid, ts in self.last_access.items() if now - ts > ttl]
-#         for sid in to_delete:
-#             self.delete(sid)
 import time
 import pickle
 from pymongo import MongoClient, ASCENDING
@@ -60,4 +35,26 @@ class MongoDBSessionMemoryStore:
         self.collection.delete_one({'_id': session_id})
 
     def cleanup(self):
-        pass  # Not needed (MongoDB TTL does this)
+        pass  # MongoDB TTL does this automatically
+
+    # --- New methods for login/signup ---
+    def upsert_profile(self, session_id, description):
+        """Create or update a user profile tied to session_id"""
+        self.collection.update_one(
+            {"_id": session_id},
+            {"$set": {
+                "data.description": description,
+                "last_access": time.time()
+            }},
+            upsert=True
+        )
+        return self.get_profile(session_id)
+
+    def get_profile(self, session_id):
+        doc = self.collection.find_one({"_id": session_id})
+        if not doc:
+            return None
+        return {
+            "session_id": session_id,
+            "description": doc.get("data", {}).get("description", "")
+        }
